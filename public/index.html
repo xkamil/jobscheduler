@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+</head>
+<body>
+<div id="app" class="container-fluid">
+  <div class="row">
+    <div class="col-sm-4">
+
+      <label for="job-user" class="form-label"><b>scheduled by</b></label>
+      <div class="input-group mb-3" id="job-user">
+        <input type="text" class="form-control" placeholder="jenkins username" v-model="jenkinsUsername">
+        <input type="text" class="form-control" placeholder="jenkins api token" v-model="jenkinsApiToken">
+      </div>
+
+      <label for="job-execute-at" class="form-label"><b>Execution date</b></label>
+      <div class="input-group mb-3" id="job-execute-at">
+        <input type="datetime-local" v-model="jobExecutionDate"/>
+      </div>
+
+      <label for="job-url" class="form-label"><b>Job url</b></label>
+      <div class="input-group mb-3" id="job-url">
+        <input type="text" class="form-control" placeholder="Job url" v-model="jobUrl">
+      </div>
+
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" value="" id="flexCheckDefault" v-model="isJobParameterized">
+        <label class="form-check-label" for="flexCheckDefault">
+          Job is parameterized
+        </label>
+      </div>
+
+      <div v-if="isJobParameterized">
+        <div v-for="(value, name) in jobParams">
+          <div class="input-group mb-3">
+            <span class="input-group-text">{{ name }} </span>
+            <input type="text" class="form-control" placeholder="value" v-model="jobParams[name]">
+            <button class="btn btn-danger" type="button" @click="removeParam(name)">X</button>
+          </div>
+        </div>
+
+        <div class="input-group mb-3" id="job-params">
+          <input type="text" class="form-control" list="datalistOptions" placeholder="name" v-model="paramName">
+          <input type="text" class="form-control"  placeholder="value" v-model="paramValue">
+          <button class="btn btn-success" type="button" @click="addParam">+</button>
+          <datalist id="datalistOptions">
+            <option value="BRANCH">
+            <option value="TESTS_TO_RUN">
+            <option value="INTEGRATION_TESTS_TO_RUN">
+            <option value="INCLUDE_TAGS">
+            <option value="EXCLUDE_TAGS">
+            <option value="RERUN_FAILED_TESTS">
+          </datalist>
+        </div>
+
+      </div>
+
+      <input type="button" :disabled="isScheduleDisabled" class="btn btn-success mt-3" value="schedule job"
+             @click="schedule">
+    </div>
+  </div>
+
+  <div class="row mt-5">
+    <div class="col-sm-12">
+      <h3>scheduled jobs</h3>
+      <span class="btn btn-sm btn-secondary" @click="loadScheduledJobs">refresh</span>
+      <span class="btn btn-sm btn-secondary" @click="deleteScheduledJobs">delete scheduled</span>
+      <table class="table table-hover">
+        <thead>
+        <tr>
+          <th scope="col">url</th>
+          <th scope="col">scheduled by</th>
+          <th scope="col">execute on</th>
+          <th scope="col">scheduling status</th>
+          <th scope="col">action</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-for="job in scheduledJobs">
+          <td>{{ job.jobUrl }}</td>
+          <td>{{ job.jenkinsUsername }}</td>
+          <td>{{ job.jobExecutionDate }}</td>
+          <td :title="job.error">{{ job.status }}</td>
+          <td><span class="btn btn-sm btn-warning" @click="cancelJob(job.id)">remove</span></td>
+        </tr>
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+
+<script>
+  var app = new Vue({
+    el: '#app',
+    data: {
+      jenkinsUsername: window.localStorage.getItem("jenkinsUsername"),
+      jenkinsApiToken: window.localStorage.getItem("jenkinsApiToken"),
+      jobUrl: window.localStorage.getItem("jobUrl"),
+      jobExecutionDate: window.localStorage.getItem("jobExecutionDate"),
+      paramName: null,
+      paramValue: null,
+      isJobParameterized: false,
+      jobParams: {},
+      scheduledJobs: []
+    },
+    created: function (){
+      this.loadScheduledJobs();
+    },
+    methods: {
+      addParam: function () {
+        if (this.paramName && this.paramName.length > 0 && !this.jobParams[this.paramName]) {
+          this.jobParams = {...this.jobParams, [this.paramName]: this.paramValue};
+          this.paramName = null;
+          this.paramValue = null;
+        }
+      },
+      removeParam: function (paramName) {
+        const newParams = JSON.parse(JSON.stringify(this.jobParams));
+        delete newParams[paramName];
+        this.jobParams = newParams;
+      },
+      schedule: function () {
+        localStorage.setItem("jenkinsUsername", this.jenkinsUsername);
+        localStorage.setItem("jenkinsApiToken", this.jenkinsApiToken);
+        localStorage.setItem("jobUrl", this.jobUrl);
+        localStorage.setItem("jobExecutionDate", this.jobExecutionDate);
+
+        const job = {
+          jenkinsUsername: this.jenkinsUsername,
+          jenkinsApiToken: this.jenkinsApiToken,
+          jobExecutionDate: new Date(this.jobExecutionDate),
+          jobUrl: buildUrl(this.jobUrl, this.isJobParameterized, this.jobParams)
+        }
+        apiScheduleJob(job).then(() => this.loadScheduledJobs());
+      },
+      cancelJob: function (id) {
+        apiCancelJob(id).then(() => this.loadScheduledJobs());
+      },
+      deleteScheduledJobs: function (id) {
+        apiDeleteScheduledJobs().then(() => this.loadScheduledJobs());
+      },
+      loadScheduledJobs: function () {
+        apiGetScheduledJobs().then(scheduledJobs => this.scheduledJobs = scheduledJobs.map(
+            job => ({...job, jobExecutionDate: new Date(job.jobExecutionDate).toLocaleString()})));
+      }
+    },
+    computed: {
+      isScheduleDisabled() {
+        return !this.jobUrl || !this.jenkinsUsername || !this.jobExecutionDate
+      }
+    }
+  })
+
+  function buildUrl(url, isJobParameterized, params) {
+    let finalUrl = url;
+    if (isJobParameterized && params) {
+      finalUrl += "/buildWithParameters?"
+      Object.keys(params).forEach(key => {
+        console.log(params)
+        console.log(params[key])
+        finalUrl += `${key}=${params[key]}&`;
+      })
+      finalUrl = finalUrl.substring(0, finalUrl.length -1);
+    } else {
+      finalUrl += "/build"
+    }
+    return finalUrl;
+  }
+
+  function apiScheduleJob(job) {
+    return fetch('/jobs/schedule', {
+      method: 'POST',
+      body: JSON.stringify(job),
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+  }
+
+  function apiCancelJob(id) {
+    return fetch(`/jobs/schedule/${id}`, {
+      method: 'DELETE'
+    })
+  }
+
+  function apiDeleteScheduledJobs() {
+    return fetch(`/jobs/schedule`, {
+      method: 'DELETE'
+    })
+  }
+
+  async function apiGetScheduledJobs() {
+    const response = await fetch('/jobs');
+    return await response.json();
+  }
+
+
+</script>
